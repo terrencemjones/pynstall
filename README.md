@@ -7,7 +7,8 @@ Turn your Python scripts into proper Windows apps.
 ## Features
 
 - **Venv-aware** - Automatically finds and uses your project's virtual environment
-- **Taskbar-friendly** - Sets AppUserModelID so pinned icons group correctly
+- **Taskbar-friendly** - Sets AppUserModelID on both the shortcut and the running process, so pinned icons group correctly
+- **Crash visibility** - A generated launcher shows an error dialog and writes a full traceback to `%LOCALAPPDATA%\<AppName>\pynstall.log` instead of dying silently under `pythonw.exe`
 - **No bundling** - Unlike PyInstaller, your code stays live and editable
 - **Console hiding** - GUI apps launch without a console window (uses `pythonw.exe`)
 - **Custom icons** - Use your own `.ico` file for the shortcut
@@ -131,14 +132,16 @@ uninstall_app(name="My App")
 
 ## How It Works
 
-pynstall creates a Windows shortcut that:
+pynstall generates a small, dependency-free launcher at
+`%LOCALAPPDATA%\<AppName>\launcher.py` and creates a Windows shortcut that:
 
 1. Points to `pythonw.exe` in your venv (no console window for GUI apps)
-2. Runs your entry point with `-m module.path` or direct script path
-3. Sets the working directory to your project root
-4. Includes a custom AppUserModelID for proper taskbar grouping
+2. Runs the generated launcher script
+3. Sets the process AppUserModelID at startup to match the shortcut's AppUserModelID, keeping pinned and running icons grouped
+4. Verifies the venv's Python executable exists, then runs the entry point with `runpy` (module or script)
+5. Shows a message box and appends the full traceback to `%LOCALAPPDATA%\<AppName>\pynstall.log` if the app raises
 
-Because the shortcut runs your actual source files:
+The working directory is your project root. Because the shortcut runs your actual source files:
 - Edit code → reopen app → see changes immediately
 - `git pull` → reopen app → instant update
 - No frozen executables, no rebuild step
@@ -151,8 +154,9 @@ Because the shortcut runs your actual source files:
 
 ## Optional Dependencies
 
-- `pywin32` - Required for AppUserModelID support (proper taskbar pinning)
-  - Without it, shortcuts still work but may show duplicate icons when pinned
+- `pywin32` - Stamps the AppUserModelID onto the `.lnk` shortcut (needed for proper taskbar pinning)
+  - The generated launcher always sets the process AppUserModelID at runtime via `ctypes`
+  - Without it, shortcuts still work but pinned icons may show duplicates
   - Install with: `pip install pynstall[appid]`
 
 ## License

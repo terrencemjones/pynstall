@@ -102,6 +102,8 @@ def install(
             click.echo(f"  Desktop: {result.desktop_shortcut}")
         if result.start_menu_shortcut:
             click.echo(f"  Start Menu: {result.start_menu_shortcut}")
+        if result.launcher_path:
+            click.echo(f"  Launcher: {result.launcher_path}")
 
         click.echo()
         if result.appid_set:

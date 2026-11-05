@@ -149,3 +149,109 @@ class TestInstaller:
         result = install_app(name="Test", entry="test.main", project_dir=tmp_path)
         assert result.success is False
         assert "virtual environment" in result.message.lower()
+
+
+class TestLauncherIntegration:
+    """Tests for installer support of generated launchers."""
+
+    @staticmethod
+    def _make_venv(project_dir: Path) -> Path:
+        """Create a fake Windows venv and return its Scripts directory."""
+        scripts_dir = project_dir / "venv" / "Scripts"
+        scripts_dir.mkdir(parents=True)
+        (scripts_dir / "python.exe").touch()
+        (scripts_dir / "pythonw.exe").touch()
+        return scripts_dir
+
+    def test_install_generates_launcher_and_targets_shortcut_at_it(
+        self, tmp_path, monkeypatch
+    ):
+        """Install should bake the AUMID/entry into the launcher."""
+        from pynstall import installer
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+        project_dir = tmp_path / "project"
+        scripts_dir = self._make_venv(project_dir)
+
+        captured = {}
+
+        def fake_create_shortcut(**kwargs):
+            captured.update(kwargs)
+            shortcut = Path(kwargs["shortcut_path"])
+            shortcut.parent.mkdir(parents=True, exist_ok=True)
+            shortcut.touch()
+            return True
+
+        monkeypatch.setattr(installer, "create_shortcut", fake_create_shortcut)
+        monkeypatch.setattr(
+            installer, "set_appid_on_shortcut", lambda *args, **kwargs: True
+        )
+        monkeypatch.setattr(installer, "get_desktop_path", lambda: tmp_path / "desktop")
+
+        result = installer.install_app(
+            name="Quote App",
+            entry="myapp.main",
+            appid="Company.QuoteApp.1.0",
+            project_dir=project_dir,
+        )
+
+        expected_launcher = (
+            tmp_path / "localappdata" / "Quote App" / "launcher.py"
+        )
+        assert result.success is True
+        assert result.launcher_path == expected_launcher
+        assert result.launcher_path.exists()
+
+        source = result.launcher_path.read_text(encoding="utf-8")
+        assert "APP_ID = 'Company.QuoteApp.1.0'" in source
+        assert "ENTRY = 'myapp.main'" in source
+        assert f"PROJECT_DIR = {str(project_dir.resolve())!r}" in source
+
+        assert captured["target_path"] == scripts_dir / "pythonw.exe"
+        assert captured["arguments"] == f'"{expected_launcher}"'
+
+    def test_install_script_entry_uses_absolute_path(self, tmp_path, monkeypatch):
+        """Script entries should be baked into the launcher as absolute paths."""
+        from pynstall import installer
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+        project_dir = tmp_path / "project"
+        self._make_venv(project_dir)
+        script_path = project_dir / "main.py"
+        script_path.write_text("print('hello')\n", encoding="utf-8")
+
+        monkeypatch.setattr(installer, "create_shortcut", lambda **kwargs: True)
+        monkeypatch.setattr(
+            installer, "set_appid_on_shortcut", lambda *args, **kwargs: True
+        )
+        monkeypatch.setattr(installer, "get_desktop_path", lambda: tmp_path / "desktop")
+
+        result = installer.install_app(
+            name="Script App",
+            entry="main.py",
+            project_dir=project_dir,
+        )
+
+        assert result.success is True
+        source = result.launcher_path.read_text(encoding="utf-8")
+        assert "ENTRY_IS_SCRIPT = True" in source
+        assert repr(str(script_path.resolve())) in source
+
+    def test_uninstall_removes_generated_launcher(self, tmp_path, monkeypatch):
+        """Uninstall should remove the launcher file and empty app directory."""
+        from pynstall import installer
+        from pynstall.launcher import get_launcher_path
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+        launcher_path = get_launcher_path("Quote App")
+        launcher_path.parent.mkdir(parents=True)
+        launcher_path.write_text("# generated launcher\n", encoding="utf-8")
+
+        monkeypatch.setattr(installer, "get_desktop_path", lambda: tmp_path / "desktop")
+        monkeypatch.setattr(
+            installer, "get_start_menu_path", lambda: tmp_path / "start-menu"
+        )
+
+        assert installer.uninstall_app(name="Quote App", project_dir=tmp_path) is True
+        assert not launcher_path.exists()
+        assert not launcher_path.parent.exists()
