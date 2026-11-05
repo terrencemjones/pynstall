@@ -7,6 +7,7 @@ from typing import Optional
 
 from .appid import set_appid_on_shortcut
 from .config import generate_appid, load_config, PynstallConfig
+from .launcher import create_launcher, get_launcher_path, remove_launcher
 from .shortcut import (
     create_shortcut,
     delete_shortcut,
@@ -25,6 +26,7 @@ class InstallResult:
     start_menu_shortcut: Optional[Path] = None
     appid_set: bool = False
     message: str = ""
+    launcher_path: Optional[Path] = None
 
 
 def install_app(
@@ -114,18 +116,20 @@ def install_app(
             success=False, message=f"Python executable not found: {python_exe}"
         )
 
-    # Determine entry point type and build arguments
-    if final_entry.endswith(".py"):
+    # Determine entry point type. The generated launcher runs the entry point
+    # itself, so the shortcut only needs to point at the launcher script.
+    entry_is_script = final_entry.endswith(".py")
+    if entry_is_script:
         # Script file
-        script_path = project_dir / final_entry
+        script_path = (project_dir / final_entry).resolve()
         if not script_path.exists():
             return InstallResult(
                 success=False, message=f"Script not found: {script_path}"
             )
-        arguments = f'"{script_path}"'
+        launcher_entry = str(script_path)
     else:
         # Module path (e.g., 'myapp.main')
-        arguments = f"-m {final_entry}"
+        launcher_entry = final_entry
 
     # Resolve icon path
     icon_path = None
@@ -139,7 +143,27 @@ def install_app(
     if not final_appid:
         final_appid = generate_appid(final_name)
 
-    result = InstallResult(success=True, appid_set=False)
+    # Generate the per-app launcher. The same AppUserModelID is baked into the
+    # launcher and stamped on the shortcut, which keeps pinned and running
+    # windows in the same taskbar group.
+    launcher_path = get_launcher_path(final_name)
+    if not create_launcher(
+        launcher_path=launcher_path,
+        app_name=final_name,
+        entry=launcher_entry,
+        appid=final_appid,
+        python_exe=python_exe,
+        entry_is_script=entry_is_script,
+        project_dir=project_dir,
+    ):
+        return InstallResult(
+            success=False, message=f"Failed to create launcher: {launcher_path}"
+        )
+
+    launcher_arguments = f'"{launcher_path}"'
+    result = InstallResult(
+        success=True, appid_set=False, launcher_path=launcher_path
+    )
 
     # Create desktop shortcut
     if final_desktop:
@@ -149,7 +173,7 @@ def install_app(
         if create_shortcut(
             shortcut_path=shortcut_path,
             target_path=python_exe,
-            arguments=arguments,
+            arguments=launcher_arguments,
             working_dir=project_dir,
             icon_path=icon_path,
             description=f"{final_name} - Installed with pynstall",
@@ -171,7 +195,7 @@ def install_app(
         if create_shortcut(
             shortcut_path=shortcut_path,
             target_path=python_exe,
-            arguments=arguments,
+            arguments=launcher_arguments,
             working_dir=project_dir,
             icon_path=icon_path,
             description=f"{final_name} - Installed with pynstall",
@@ -238,6 +262,22 @@ def uninstall_app(
             print(f"Removed Start Menu shortcut: {start_menu_shortcut}")
         else:
             success = False
+
+    # Remove the generated launcher
+    launcher_path = get_launcher_path(name)
+    if launcher_path.exists():
+        if remove_launcher(launcher_path):
+            print(f"Removed launcher: {launcher_path}")
+        else:
+            success = False
+
+    # Remove the per-app directory if it is now empty (a log file may remain).
+    try:
+        launcher_dir = launcher_path.parent
+        if launcher_dir.exists() and not any(launcher_dir.iterdir()):
+            launcher_dir.rmdir()
+    except OSError:
+        pass
 
     if success:
         print(f"Successfully uninstalled {name}")

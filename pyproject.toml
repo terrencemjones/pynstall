@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pynstall"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turn your Python scripts into proper Windows apps - venv-aware shortcuts with taskbar pinning"
 readme = "README.md"
 license = "MIT"
